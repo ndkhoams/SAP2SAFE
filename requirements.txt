@@ -1,0 +1,8 @@
+# SAP2SAFE v0.1 — chạy trên Windows (Python 3.10+)
+# comtypes: chỉ dùng được trên Windows (SAP OAPI/COM). Trên Linux, pip sẽ
+# cài được gói nhưng import comtypes sẽ lỗi vì COM không có — đó là bình
+# thường; chế độ Excel offline vẫn chạy được trên Linux.
+comtypes>=1.2.0
+openpyxl>=3.1.0
+pytest>=7.0
+pyinstaller>=6.0
