@@ -68,8 +68,10 @@ số; round-trip MONG.sf end-to-end khớp **100%** (2035/2035 dòng sau chuẩn
 GUID + dòng header ngày giờ; 1380 dòng JOINT LOADS; 92 point, 15 pattern,
 72 combo); ΣFZ khớp 15/15 pattern, chênh lệch lớn nhất 0.000000.
 Parity mới chỉ kiểm trên một fixture MONG.sf, một pipeline duy nhất
-(`step_mode="last"`, `flip_sign=true`, SAFE 22.5.1) — chưa kiểm các mode
-`specific`/`governing`/`maxmin` hay nguồn COM/`.$2k`/Excel.
+(`step_mode="last"`, `flip_sign=true`, SAFE 22.5.1) — đúng pipeline mà UI
+plugin dùng (từ bản 20261118-110700 form chỉ còn Last step, đổi dấu luôn bật).
+Các mode `specific`/`governing`/`maxmin` vẫn còn trong Core nhưng không còn
+trên UI và chưa kiểm parity.
 
 ## Nạp plugin trong SAP2000 v26
 

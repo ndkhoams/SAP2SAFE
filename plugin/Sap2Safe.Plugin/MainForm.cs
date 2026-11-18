@@ -12,7 +12,7 @@ namespace Sap2Safe.Plugin;
 
 /// <summary>
 /// Form chính SAP2SAFE — non-modal (Show, không ShowDialog), 5 bước như app.py:
-/// (1) thông tin model, (2) chọn level Z, (3) chọn output + step, (4) tham số xuất,
+/// (1) thông tin model, (2) chọn level Z, (3) chọn output, (4) tham số xuất,
 /// (5) preview + xuất .F2K + .sf + .log. KHÔNG dùng Excel.
 /// Mọi số nhập tay đều parse bằng CultureInfo.InvariantCulture.
 /// </summary>
@@ -49,13 +49,6 @@ public sealed class MainForm : Form
     private Label _lblJoints = null!;
     private ListBox _lbCases = null!;
     private ListBox _lbCombos = null!;
-    private RadioButton _rbLast = null!;
-    private RadioButton _rbSpecific = null!;
-    private RadioButton _rbGoverning = null!;
-    private RadioButton _rbMaxMin = null!;
-    private TextBox _txtStepType = null!;
-    private TextBox _txtStepNum = null!;
-    private CheckBox _chkFlip = null!;
     private TextBox _txtSafeVersion = null!;
     private TextBox _txtOutDir = null!;
     private DataGridView _grid = null!;
@@ -250,6 +243,47 @@ public sealed class MainForm : Form
         return names;
     }
 
+    // -- nút "Chọn tất cả" / "Bỏ chọn" cho mỗi listbox -------------------
+
+    private static FlowLayoutPanel MakeSelectHeader(string label, EventHandler onSelectAll, EventHandler onDeselectAll)
+    {
+        var pnl = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        pnl.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left });
+        var btnAll = new Button { Text = "Chọn tất cả", AutoSize = true };
+        btnAll.Click += onSelectAll;
+        pnl.Controls.Add(btnAll);
+        var btnNone = new Button { Text = "Bỏ chọn", AutoSize = true };
+        btnNone.Click += onDeselectAll;
+        pnl.Controls.Add(btnNone);
+        return pnl;
+    }
+
+    private void SelectAllCases_Click(object? sender, EventArgs e)
+    {
+        for (int i = 0; i < _lbCases.Items.Count; i++)
+        {
+            _lbCases.SetSelected(i, true);
+        }
+    }
+
+    private void DeselectAllCases_Click(object? sender, EventArgs e)
+    {
+        _lbCases.ClearSelected();
+    }
+
+    private void SelectAllCombos_Click(object? sender, EventArgs e)
+    {
+        for (int i = 0; i < _lbCombos.Items.Count; i++)
+        {
+            _lbCombos.SetSelected(i, true);
+        }
+    }
+
+    private void DeselectAllCombos_Click(object? sender, EventArgs e)
+    {
+        _lbCombos.ClearSelected();
+    }
+
     // -- bước 2: liệt kê joint + đọc phản lực ----------------------------
 
     private void BtnListJoints_Click(object? sender, EventArgs e)
@@ -334,31 +368,11 @@ public sealed class MainForm : Form
             return null;
         }
 
-        string stepMode = "last";
-        if (_rbSpecific.Checked)
-        {
-            stepMode = "specific";
-        }
-        else if (_rbGoverning.Checked)
-        {
-            stepMode = "governing";
-        }
-        else if (_rbMaxMin.Checked)
-        {
-            stepMode = "maxmin";
-        }
+        // Chỉ dùng Last step (user chốt 18/11): bỏ các radio Step cụ thể /
+        // Governing / Tách MAX-MIN khỏi UI; logic các mode đó vẫn còn trong
+        // Core/StepSelect.cs cho parity test, không gọi từ form nữa.
+        const string stepMode = "last";
         (string StepType, double StepNum)? specific = null;
-        if (stepMode == "specific")
-        {
-            if (!TryParseDouble(_txtStepNum.Text, out double stepNum))
-            {
-                MessageBox.Show("StepNum phải là số (dùng dấu chấm thập phân).",
-                    "SAP2SAFE", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return null;
-            }
-            string stepType = _txtStepType.Text.Trim();
-            specific = (stepType.Length == 0 ? "Step" : stepType, stepNum);
-        }
 
         string safeVersion = _txtSafeVersion.Text.Trim();
         if (safeVersion.Length == 0)
@@ -382,7 +396,7 @@ public sealed class MainForm : Form
             var result = Pipeline.BuildF2kModel(
                 _cachedReactions, jointsXyz, _outputs, selected,
                 jointsRestraint, _patternInfo, stepMode, specific,
-                _chkFlip.Checked, safeVersion);
+                true /* đổi dấu phản lực -> tải SAFE luôn BẬT (user chốt 18/11) */, safeVersion);
             _lastBuild = result;
             _lastZ = z;
             _lastTol = tol;
@@ -598,36 +612,22 @@ public sealed class MainForm : Form
         g2.Controls.Add(t2);
         root.Controls.Add(g2);
 
-        // (3) Chọn output + step
-        var g3 = new GroupBox { Text = "3. Chọn output + step đóng băng", Dock = DockStyle.Fill, AutoSize = true };
+        // (3) Chọn output — chỉ đóng băng ở Last step (user chốt 18/11).
+        var g3 = new GroupBox { Text = "3. Chọn output", Dock = DockStyle.Fill, AutoSize = true };
         var t3 = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Padding = new Padding(6) };
-        t3.Controls.Add(new Label { Text = "Load Cases (chọn nhiều):", AutoSize = true }, 0, 0);
-        t3.Controls.Add(new Label { Text = "Load Combos (chọn nhiều):", AutoSize = true }, 1, 0);
+        t3.Controls.Add(MakeSelectHeader("Load Cases (chọn nhiều):", SelectAllCases_Click, DeselectAllCases_Click), 0, 0);
+        t3.Controls.Add(MakeSelectHeader("Load Combos (chọn nhiều):", SelectAllCombos_Click, DeselectAllCombos_Click), 1, 0);
         _lbCases = new ListBox { SelectionMode = SelectionMode.MultiExtended, Height = 130, Dock = DockStyle.Fill };
         t3.Controls.Add(_lbCases, 0, 1);
         _lbCombos = new ListBox { SelectionMode = SelectionMode.MultiExtended, Height = 130, Dock = DockStyle.Fill };
         t3.Controls.Add(_lbCombos, 1, 1);
-        var pnlStep = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.TopDown };
-        _rbLast = new RadioButton { Text = "Last step (mặc định)", Checked = true, AutoSize = true };
-        _rbSpecific = new RadioButton { Text = "Step cụ thể", AutoSize = true };
-        _rbGoverning = new RadioButton { Text = "Governing step (max |F3|)", AutoSize = true };
-        _rbMaxMin = new RadioButton { Text = "Tách MAX-MIN (chỉ Envelope/RS)", AutoSize = true };
-        pnlStep.Controls.Add(_rbLast);
-        pnlStep.Controls.Add(_rbSpecific);
-        pnlStep.Controls.Add(_rbGoverning);
-        pnlStep.Controls.Add(_rbMaxMin);
-        t3.Controls.Add(pnlStep, 0, 2);
-        var pnlStepNum = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
-        pnlStepNum.Controls.Add(new Label { Text = "StepType:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        _txtStepType = new TextBox { Text = "Step", Width = 100, Anchor = AnchorStyles.Left };
-        pnlStepNum.Controls.Add(_txtStepType, 1, 0);
-        pnlStepNum.Controls.Add(new Label { Text = "StepNum:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        _txtStepNum = new TextBox { Text = "1", Width = 100, Anchor = AnchorStyles.Left };
-        pnlStepNum.Controls.Add(_txtStepNum, 1, 1);
-        t3.Controls.Add(pnlStepNum, 1, 2);
-        _chkFlip = new CheckBox { Text = "Đổi dấu phản lực -> tải SAFE (mặc định BẬT)", Checked = true, AutoSize = true, Dock = DockStyle.Fill };
-        t3.Controls.Add(_chkFlip, 0, 3);
-        t3.SetColumnSpan(_chkFlip, 2);
+        var lblLastStep = new Label
+        {
+            Text = "Đóng băng ở Last step (đổi dấu phản lực -> tải SAFE luôn bật).",
+            AutoSize = true, ForeColor = System.Drawing.Color.Gray, Dock = DockStyle.Fill,
+        };
+        t3.Controls.Add(lblLastStep, 0, 2);
+        t3.SetColumnSpan(lblLastStep, 2);
         g3.Controls.Add(t3);
         root.Controls.Add(g3);
 
@@ -669,9 +669,8 @@ public sealed class MainForm : Form
         {
             _grid.Columns.Add(col, col);
         }
-        t5.Controls.Add(_grid, 0, 0);
-        _lblTotals = new Label { Text = "", AutoSize = true, Dock = DockStyle.Fill };
-        t5.Controls.Add(_lblTotals, 0, 1);
+        // Cụm nút ĐẶT TRÊN lưới preview (user chốt 18/11): trước đây nút nằm
+        // dưới lưới nên bị đẩy khỏi mép form, không nhìn thấy.
         var pnlBtns = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
         var btnPreview = new Button { Text = "Xem preview", AutoSize = true };
         btnPreview.Click += BtnPreview_Click;
@@ -682,7 +681,10 @@ public sealed class MainForm : Form
         var btnClose = new Button { Text = "Đóng", AutoSize = true };
         btnClose.Click += BtnClose_Click;
         pnlBtns.Controls.Add(btnClose);
-        t5.Controls.Add(pnlBtns, 0, 2);
+        t5.Controls.Add(pnlBtns, 0, 0);
+        _lblTotals = new Label { Text = "", AutoSize = true, Dock = DockStyle.Fill };
+        t5.Controls.Add(_lblTotals, 0, 1);
+        t5.Controls.Add(_grid, 0, 2);
         g5.Controls.Add(t5);
         root.Controls.Add(g5);
     }

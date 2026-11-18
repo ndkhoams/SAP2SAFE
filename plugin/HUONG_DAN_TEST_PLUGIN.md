@@ -27,6 +27,9 @@ chỉ làm được trên máy Windows có SAP2000 v26.
       trong ngoặc — **điểm này xác minh ánh xạ int -> tên loại combo** (xem API_DUMP.md
       mục 1: DLL không có enum loại combo, ánh xạ theo tài liệu CSI OAPI, chưa xác
       minh bằng runtime). Kiểm tra cả combo Linear Add / SRSS / Absolute Add nếu có.
+- [ ] Nút "Chọn tất cả" / "Bỏ chọn" trên mỗi listbox Cases/Combos chọn/bỏ hết item.
+- [ ] Cụm nút Xem preview / Xuất / Đóng nằm TRÊN lưới preview, nhìn thấy ngay
+      không cần cuộn (bản cũ nút nằm dưới lưới nên bị che).
 - [ ] Đóng form bằng nút X và bằng nút Đóng — SAP không báo lỗi plugin, mở lại
       plugin vẫn chạy (Finish gọi đúng 1 lần).
 
@@ -34,7 +37,8 @@ chỉ làm được trên máy Windows có SAP2000 v26.
 
 1. Chọn Z (mặc định gợi ý) → **Liệt kê joint tại Z** → label hiện số joint + số joint
    có gối + số dòng phản lực đã đọc.
-2. Chọn 1–2 case (kể cả 1 case Nonlinear Static nếu có) + 1 combo → step mode `last`
+2. Chọn 1–2 case (kể cả 1 case Nonlinear Static nếu có) + 1 combo — hoặc bấm
+   "Chọn tất cả" ở mỗi listbox để chọn hết → form luôn đóng băng ở Last step
    → **Xem preview**: grid hiện đủ cột Joint/X/Y/Pattern/FX..MZ; label ΣFZ theo pattern.
 3. **Xuất .F2K + .sf (+ .log)** → 3 file `SAP2SAFE_Z{z}.f2k/.sf/.log` trong thư mục xuất.
 4. Mở file `.log`: mục "Tong kiem tra" phải KHOP hết mọi pattern
@@ -44,20 +48,19 @@ chỉ làm được trên máy Windows có SAP2000 v26.
 6. So sánh 1 case với app Python: cùng model, cùng Z, cùng case, step `last` —
    số trong grid preview phải khớp file Excel/Python đã xuất trước đó.
 
-## 4. Test các step mode
+## 4. Step mode — chỉ còn Last step (từ bản build 20261118-110700)
 
-- `specific` (StepType `Step`, StepNum `1`): preview chỉ lấy đúng step đó; nhập
-  StepNum chữ → phải báo lỗi tiếng Việt, không lặng lẽ dùng mặc định.
-- `governing`: log/preview ghi governing step theo max |F3|.
-- `maxmin` (chỉ combo Envelope/RS): mỗi pattern tách `_MAX`/`_MIN`; log cảnh báo
-  vector không đồng thời.
-- Bỏ tick "Đổi dấu phản lực": ΣFZ đổi dấu so với lúc tick.
+- Form chỉ còn Last step (label xám "Đóng băng ở Last step" dưới 2 listbox);
+  các lựa chọn Step cụ thể / Governing / Tách MAX-MIN đã bỏ khỏi UI theo yêu
+  cầu 18/11. Logic các mode đó vẫn còn trong Core (`StepSelect.cs`) để parity
+  test, không gọi từ form nữa.
+- Đổi dấu phản lực -> tải SAFE luôn BẬT (không còn checkbox trên form).
 
 ## 5. Test lỗi (không được crash SAP)
 
 - Model chưa chạy phân tích (Run Analysis) → bấm Liệt kê joint: phải báo lỗi
   "chưa chạy phân tích..." bằng MessageBox, SAP vẫn sống, form vẫn đóng được.
-- Nhập Z chữ / tol âm / StepNum chữ → MessageBox tiếng Việt, không crash.
+- Nhập Z chữ / tol âm → MessageBox tiếng Việt, không crash.
 - Đổi Z sau khi liệt kê joint rồi bấm Preview → phải yêu cầu liệt kê lại.
 - Sau khi đọc phản lực xong: kiểm tra trong SAP (Display → Show Tables /
   Results Setup) rằng lựa chọn case/combo để xuất kết quả đã được TRẢ LẠI như
@@ -66,8 +69,10 @@ chỉ làm được trên máy Windows có SAP2000 v26.
 ## 6. Những điểm chỉ xác minh được trên máy thật (chưa xác minh trên Linux)
 
 - `GetNameList` có lọc `eLoadCaseType` có trả đúng loại case không.
-- `JointReact("", ObjectElm)` có trả tất cả joint không; tên LoadCase trả về trong
-  mảng có đúng tên case không.
+- `JointReact` gọi theo từng joint tại Z (đã sửa ở head `3dcdb57` sau khi gọi
+  chung `""` trả về 1 trên SAP thật): bấm Liệt kê joint phải đọc được phản lực
+  (vd 92 joint × 15 case × 2 dòng Max/Min); nếu chậm bất thường thì báo lại
+  (1380 lần gọi API).
 - Ánh xạ int loại combo (0 Linear Add / 1 Envelope / 2 Absolute Add / 3 SRSS /
   4 Range Add) — xem mục 2.
 - `GetCoordCartesian(..., "Global")` có nhận chuỗi `"Global"` làm hệ tọa độ không.
