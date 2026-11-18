@@ -433,13 +433,21 @@ public sealed class SapReader
 
     /// <summary>
     /// Đọc JointReact cho từng output (case; combo cũng hỗ trợ nhưng Pipeline chỉ đóng băng case).
-    /// Name "" = tất cả joint; ItemTypeElm = ObjectElm (== 0, đã xác minh — TUYỆT ĐỐI không truyền literal 1).
-    /// Lực đổi sang kN, mô men sang kN-m. 0 dòng -> throw với gợi ý chưa chạy phân tích.
+    /// Gọi theo TỪNG joint tại level — như PileReactionChecker.TryGetReactionRange
+    /// bên plugin ETABS đang chạy tốt. KHÔNG gọi JointReact("", ObjectElm) cho tất
+    /// cả joint: trên SAP2000 v26 thật cách đó trả về 1 dù model đã chạy phân tích
+    /// và bảng Joint Reactions có đủ số. Các mảng khởi tạo rỗng (không null),
+    /// cũng như code ETABS. ItemTypeElm = ObjectElm (== 0, đã xác minh — TUYỆT ĐỐI
+    /// không truyền literal 1).
+    /// Lực đổi sang kN, mô men sang kN-m. Joint không trả dòng nào (vd joint không
+    /// có gối) thì bỏ qua — giống app Python (dòng vắng thì không freeze).
+    /// ret != 0 ở joint nào thì throw ngay, ghi rõ tên joint + tên output.
     /// </summary>
-    public List<Reaction> GetJointReactions(IEnumerable<SapOutput> outputs)
+    public List<Reaction> GetJointReactions(IEnumerable<SapOutput> outputs, IEnumerable<string> jointNames)
     {
         EnsureUnits();
         double momentFactor = _forceFactor * _lengthFactor;
+        var joints = jointNames?.ToList() ?? new List<string>();
         var reactions = new List<Reaction>();
         foreach (var output in outputs)
         {
@@ -456,48 +464,57 @@ public sealed class SapReader
                     $"Chọn case {output.Name} để đọc phản lực");
             }
 
-            int n = 0;
-            string[]? obj = null, elm = null, loadCase = null, stepType = null;
-            double[]? stepNum = null, f1 = null, f2 = null, f3 = null, m1 = null, m2 = null, m3 = null;
-            int ret = _model.Results.JointReact(
-                "", eItemTypeElm.ObjectElm,
-                ref n, ref obj, ref elm, ref loadCase, ref stepType, ref stepNum,
-                ref f1, ref f2, ref f3, ref m1, ref m2, ref m3);
-            Check(ret, $"Đọc phản lực của {output.Name}");
-
-            // Mảng null/thiếu phần tử -> coi như không có dữ liệu, không index mù.
-            int count = n;
-            foreach (Array? arr in new Array?[] { obj, loadCase, stepType, stepNum, f1, f2, f3, m1, m2, m3 })
+            int before = reactions.Count;
+            foreach (string jointName in joints)
             {
-                if (arr is null)
+                // Mảng khởi tạo rỗng như code ETABS (TryGetReactionRange).
+                int n = 0;
+                string[] obj = Array.Empty<string>(), elm = Array.Empty<string>();
+                string[] loadCase = Array.Empty<string>(), stepType = Array.Empty<string>();
+                double[] stepNum = Array.Empty<double>(), f1 = Array.Empty<double>(),
+                    f2 = Array.Empty<double>(), f3 = Array.Empty<double>(),
+                    m1 = Array.Empty<double>(), m2 = Array.Empty<double>(),
+                    m3 = Array.Empty<double>();
+                int ret = _model.Results.JointReact(
+                    jointName, eItemTypeElm.ObjectElm,
+                    ref n, ref obj, ref elm, ref loadCase, ref stepType, ref stepNum,
+                    ref f1, ref f2, ref f3, ref m1, ref m2, ref m3);
+                Check(ret, $"Đọc phản lực của {output.Name} tại joint {jointName}");
+
+                // Mảng null/thiếu phần tử -> joint này coi như 0 dòng, không index mù.
+                int count = n;
+                foreach (Array? arr in new Array?[] { obj, loadCase, stepType, stepNum, f1, f2, f3, m1, m2, m3 })
                 {
-                    count = 0;
-                    break;
+                    if (arr is null)
+                    {
+                        count = 0;
+                        break;
+                    }
+                    count = Math.Min(count, arr.Length);
                 }
-                count = Math.Min(count, arr.Length);
+                for (int i = 0; i < count; i++)
+                {
+                    reactions.Add(new Reaction
+                    {
+                        Joint = obj![i] ?? jointName,
+                        OutputName = loadCase![i] ?? output.Name,
+                        OutputKind = output.Kind,
+                        StepType = stepType![i] ?? "",
+                        StepNum = stepNum![i],
+                        F1 = f1![i] * _forceFactor,
+                        F2 = f2![i] * _forceFactor,
+                        F3 = f3![i] * _forceFactor,
+                        M1 = m1![i] * momentFactor,
+                        M2 = m2![i] * momentFactor,
+                        M3 = m3![i] * momentFactor,
+                    });
+                }
             }
-            if (count <= 0)
+            if (reactions.Count == before)
             {
                 throw new SapApiException(
                     $"Không có phản lực cho {output.Name} — có thể chưa chạy phân tích " +
                     "(Run Analysis) hoặc output chưa được chọn để xuất kết quả.");
-            }
-            for (int i = 0; i < count; i++)
-            {
-                reactions.Add(new Reaction
-                {
-                    Joint = obj![i] ?? "",
-                    OutputName = loadCase![i] ?? output.Name,
-                    OutputKind = output.Kind,
-                    StepType = stepType![i] ?? "",
-                    StepNum = stepNum![i],
-                    F1 = f1![i] * _forceFactor,
-                    F2 = f2![i] * _forceFactor,
-                    F3 = f3![i] * _forceFactor,
-                    M1 = m1![i] * momentFactor,
-                    M2 = m2![i] * momentFactor,
-                    M3 = m3![i] * momentFactor,
-                });
             }
         }
         return reactions;

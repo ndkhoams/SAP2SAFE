@@ -286,7 +286,10 @@ public sealed class MainForm : Form
             }
             using (new SapStateGuard(_sapModel, _outputs))
             {
-                _cachedReactions = _reader.GetJointReactions(casesOnly);
+                // Đọc theo từng joint tại Z (JointReact theo tên joint — cách gọi
+                // "" cho tất cả joint trả về 1 trên SAP2000 v26 thật).
+                _cachedReactions = _reader.GetJointReactions(
+                    casesOnly, _jointsAtZ.Select(j => j.Name).ToList());
             }
             _lblJoints.Text += $" Đã đọc {_cachedReactions.Count} dòng phản lực cho {casesOnly.Count} case.";
         }
