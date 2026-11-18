@@ -92,6 +92,18 @@ FX=0.415, FY=−130.833, **FZ=−200.347** (âm = ép xuống móng).
   file .sf (value có khoảng trắng được quote). Trùng tên → `_2`, `_3`.
 - Combo Envelope (ENV ULS/SLS) được copy y hệt vào SAFE; SAFE tự tính
   envelope từ các case đã đóng băng.
-- Combo Envelope / Response Spectrum ở chế độ tách MAX-MIN: vector đó
-  KHÔNG đồng thời, chỉ dùng khi bạn chấp nhận (xem cảnh báo trong app
-  và file `.log`).
+- **Tách MAX/MIN mặc định (từ 18/11, không có control UI):** với mỗi case
+  có dòng Max/Min do SAP báo cáo, so sánh 2 vector từng joint (đủ 6 thành
+  phần, dung sai |Max−Min| > 1e-6 × max(1, |Max|, |Min|)). Khác nhau ở
+  bất kỳ joint/thành phần nào → tách thành `<tên>_MAX` + `<tên>_MIN`
+  (Max trước Min sau) và tạo combo Envelope `<tên>_ENV` (MAX 1.0 +
+  MIN 1.0) đặt TRƯỚC các combo gốc; các combo gốc dùng case đó được viết
+  lại sang `_ENV` (giữ nguyên SF, vd 1.1·SW → 1.1·SW_ENV). `_ENV` được
+  tạo ngay cả khi không combo gốc nào dùng tới case đó. Max = Min thì giữ
+  1 pattern tên gốc. Case chỉ có dòng Step thì lấy step cuối, không tách.
+  Joint thiếu 1 phía khi tách thì lấy phía còn lại bù vào + ghi warning.
+  Tên `_ENV` trùng tên đã có thì thêm `_2`, `_3`... Mỗi case tách/giữ
+  đều ghi 1 dòng vào file `.log` (chênh lệch Max-Min lớn nhất + kết luận
+  + danh sách combo gốc đã viết lại). Vector `_MAX`/`_MIN` là các dòng
+  envelope do SAP báo cáo, có thể không đồng thời — xem cảnh báo trong
+  app và file `.log`.

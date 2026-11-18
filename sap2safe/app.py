@@ -21,7 +21,7 @@ from . import __version__
 from .excel_reader import list_outputs, read_joint_reactions
 from .excel_writer import write_safe_tables_xlsx
 from .f2k_template import compare_with_writer
-from .mapping import apply_sign_flip, build_name_map, decide_combo_mapping
+from .mapping import MAX_SAFE_NAME_LEN, apply_sign_flip, build_name_map, decide_combo_mapping
 from .model import F2kModel, Joint, SapOutput
 from .report import write_log
 from .s2k_reader import parse_s2k, s2k_outputs
@@ -56,6 +56,26 @@ def closure_outputs(outputs: list[SapOutput], selected: list[str]):
     return included, auto
 
 
+def _env_combo_name(base_safe: str, used: set[str]) -> str:
+    """Tên combo _ENV từ tên SAFE của case gốc, xử lý trùng + giới hạn 64 ký tự.
+
+    Thử `<tên>_ENV`, rồi `<tên>_ENV_2`, `<tên>_ENV_3`... (cắt ngắn tên gốc
+    để vừa giới hạn). Dùng chung cho Python và C# (port 1-1).
+    """
+    def _cand(base: str, suffix: str) -> str:
+        name = base + suffix
+        if len(name) > MAX_SAFE_NAME_LEN:
+            name = base[: MAX_SAFE_NAME_LEN - len(suffix)] + suffix
+        return name
+
+    candidate = _cand(base_safe, "_ENV")
+    i = 2
+    while candidate in used:
+        candidate = _cand(base_safe, f"_ENV_{i}")
+        i += 1
+    return candidate
+
+
 def build_f2k_model(
     reactions,
     joints_xyz: dict[str, tuple[float, float, float]],
@@ -73,6 +93,11 @@ def build_f2k_model(
     Trả về (F2kModel, info_log, warnings). `reactions` phải ở đơn vị kN, m.
     Combo được COPY Y HỆT định nghĩa SAP (không đóng băng thành pattern
     riêng); các case thành phần được tự động đưa vào để đóng băng.
+
+    Quy tắc tách MAX/MIN MẶC ĐỊNH (user chốt 18/11, xem step_select.py):
+    case có dòng Max != Min thì tách thành <tên>_MAX + <tên>_MIN, tạo thêm
+    combo Envelope <tên>_ENV (MAX 1.0 + MIN 1.0) đặt TRƯỚC các combo gốc,
+    và các combo gốc dùng case đó được viết lại sang _ENV (giữ nguyên SF).
     """
     joints_restraint = joints_restraint or {}
     pattern_info = pattern_info or {}
@@ -82,7 +107,7 @@ def build_f2k_model(
     rows = [r for r in reactions if r.output_name in sel_names and r.output_kind == "case"]
     joints_xy = {n: (c[0], c[1]) for n, c in joints_xyz.items()}
 
-    frozen, warnings = freeze_reactions(rows, step_mode, specific, joints_xy)
+    frozen, warnings, splits = freeze_reactions(rows, step_mode, specific, joints_xy)
     if not frozen:
         raise ValueError("Không có phản lực nào sau khi đóng băng — kiểm tra "
                          "lại output đã chọn và joint tại level.")
@@ -117,9 +142,64 @@ def build_f2k_model(
         if ld.pattern not in pattern_names:
             pattern_names.append(ld.pattern)
 
+    # -- Tách MAX/MIN mặc định: combo _ENV + viết lại combo gốc ----------
+    # Tên SAFE -> tên gốc (để tra pattern_info theo tên gốc, đúng cả khi
+    # name_map đổi tên do sanitize/trùng).
+    safe_to_orig = {safe: orig for orig, safe in name_map.items()}
+
+    def orig_of_safe_pattern(pattern: str) -> str:
+        return safe_to_orig.get(base_of(pattern), base_of(pattern))
+
+    # Tên combo _ENV cho các case vừa tách (tên GỐC -> tên _ENV trong file).
+    split_env: dict[str, str] = {}
+    used_env_names = set(name_map.values()) | set(pattern_names)
+    for out in sel_outputs:
+        if out.kind == "combo":
+            continue
+        sp = splits.get(out.name)
+        if sp is None or not sp.split:
+            continue
+        env = _env_combo_name(name_map[out.name], used_env_names)
+        used_env_names.add(env)
+        split_env[out.name] = env
+        sp.env_name = env
+
+    # Ghi chú tách MAX/MIN vào .log (qua info["notes"]).
+    notes: list[str] = []
+    for out in sel_outputs:
+        if out.kind == "combo":
+            continue
+        sp = splits.get(out.name)
+        if sp is None or not sp.has_maxmin:
+            continue
+        safe_name = name_map[out.name]
+        if sp.split:
+            max_safe = safe_pattern(out.name + "_MAX")
+            min_safe = safe_pattern(out.name + "_MIN")
+            notes.append(
+                f"Tách MAX/MIN mặc định: case {out.name} — chênh lệch Max-Min "
+                f"lớn nhất {sp.max_diff:g} ({sp.max_component}, joint "
+                f"{sp.max_joint}) → tách thành {max_safe} + {min_safe}, tạo "
+                f"combo Envelope {split_env[out.name]} (Max/Min là các dòng "
+                "envelope do SAP báo cáo, có thể không đồng thời)."
+            )
+        elif sp.only_side is not None:
+            other = "Min" if sp.only_side == "Max" else "Max"
+            notes.append(
+                f"Tách MAX/MIN mặc định: case {out.name} — chỉ có dòng "
+                f"{sp.only_side} (không có dòng {other}) → giữ 1 pattern "
+                f"tên gốc {safe_name}."
+            )
+        else:
+            notes.append(
+                f"Tách MAX/MIN mặc định: case {out.name} — Max = Min (chênh "
+                f"lệch lớn nhất {sp.max_diff:g}) → giữ 1 pattern tên gốc "
+                f"{safe_name}."
+            )
+
     patterns = []
     for p in pattern_names:
-        info_p = pattern_info.get(base_of(p), {})
+        info_p = pattern_info.get(orig_of_safe_pattern(p), {})
         patterns.append({
             "name": p,
             "type": safe_pattern_type(info_p.get("design_type", "")) if info_p else "Other",
@@ -132,21 +212,58 @@ def build_f2k_model(
         safe_version=safe_version,
     )
     sources: list[str] = []
+    # Combo _ENV tự sinh đặt TRƯỚC các combo gốc.
+    for out in sel_outputs:
+        if out.kind == "combo":
+            continue
+        sp = splits.get(out.name)
+        if sp is None or not sp.split:
+            continue
+        env = split_env[out.name]
+        max_safe = safe_pattern(out.name + "_MAX")
+        min_safe = safe_pattern(out.name + "_MIN")
+        model.combos.append({"name": env, "type": "Envelope",
+                             "items": [(max_safe, 1.0), (min_safe, 1.0)]})
+        sources.append(f"{env} <- combo Envelope tự sinh từ case {out.name} "
+                       f"({max_safe} 1.0 + {min_safe} 1.0)")
+    rewritten_combos: list[str] = []
     for out in sel_outputs:
         if out.kind != "combo":
-            sources.append(f"{name_map[out.name]} <- case {out.name} (frozen, "
-                           f"{'nonlinear' if out.is_nonlinear else 'linear'})")
+            sp = splits.get(out.name)
+            if sp is not None and sp.split:
+                max_safe = safe_pattern(out.name + "_MAX")
+                min_safe = safe_pattern(out.name + "_MIN")
+                sources.append(f"{max_safe} + {min_safe} <- case {out.name} (frozen, "
+                               f"{'nonlinear' if out.is_nonlinear else 'linear'}; tách MAX/MIN, "
+                               f"chênh lệch lớn nhất {sp.max_diff:g})")
+            else:
+                sources.append(f"{name_map[out.name]} <- case {out.name} (frozen, "
+                               f"{'nonlinear' if out.is_nonlinear else 'linear'})")
             continue
         safe_name = name_map[out.name]
         mode, items, note = decide_combo_mapping(out, outputs_by_name)
         if mode == "rebuild":
-            combo_items = [(name_map.get(c, c), sf) for c, sf in items]
+            combo_items = []
+            rewrites = []
+            for c, sf in items:
+                target = outputs_by_name.get(c)
+                if c in split_env and target is not None and target.kind == "case":
+                    combo_items.append((split_env[c], sf))
+                    rewrites.append(f"{c} -> {split_env[c]}")
+                else:
+                    combo_items.append((name_map.get(c, c), sf))
+            if rewrites:
+                rewritten_combos.append(f"{safe_name} ({', '.join(rewrites)})")
+                note = note + "; viết lại: " + ", ".join(rewrites)
         else:
             combo_items = [(safe_name, 1.0)]
         model.combos.append({"name": safe_name,
                              "type": out.combo_type or "Linear Add",
                              "items": combo_items})
         sources.append(f"{safe_name} <- combo {out.name} ({note})")
+    if rewritten_combos:
+        notes.append("Combo gốc viết lại sang combo _ENV: "
+                     + "; ".join(rewritten_combos) + ".")
     for name in sorted(joints_xyz, key=lambda n: (0, int(n)) if n.lstrip("-").isdigit() else (1, n)):
         x, y, _z = joints_xyz[name]
         restraint = joints_restraint.get(name)
@@ -170,7 +287,14 @@ def build_f2k_model(
         "warnings": warnings,
         "safe_version": safe_version,
         "units": "kN, m, C",
-        "notes": [],
+        "notes": notes,
+        "splits": {name: {"split": sp.split, "has_maxmin": sp.has_maxmin,
+                          "max_diff": sp.max_diff, "max_joint": sp.max_joint,
+                          "max_component": sp.max_component,
+                          "only_side": sp.only_side,
+                          "filled_joints": list(sp.filled_joints),
+                          "env": sp.env_name}
+                   for name, sp in splits.items()},
     }
     return model, info, warnings
 

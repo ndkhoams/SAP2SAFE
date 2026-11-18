@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace Sap2Safe.Core;
@@ -21,6 +22,7 @@ public sealed class BuildInfo
     public string SafeVersion { get; set; } = "22.5.1";
     public string Units { get; set; } = "kN, m, C";
     public List<string> Notes { get; } = new();
+    public Dictionary<string, SplitInfo> Splits { get; } = new();
 }
 
 public sealed class BuildResult
@@ -73,6 +75,31 @@ public static class Pipeline
         return (included, auto);
     }
 
+    /// <summary>
+    /// Tên combo _ENV từ tên SAFE của case gốc, xử lý trùng + giới hạn 64 ký tự.
+    /// Thử &lt;tên&gt;_ENV, rồi &lt;tên&gt;_ENV_2, &lt;tên&gt;_ENV_3... (port 1-1 từ Python).
+    /// </summary>
+    private static string MakeEnvComboName(string baseSafe, HashSet<string> used)
+    {
+        string Cand(string b, string suffix)
+        {
+            string name = b + suffix;
+            if (name.Length > Mapping.MaxSafeNameLen)
+            {
+                name = b.Substring(0, Mapping.MaxSafeNameLen - suffix.Length) + suffix;
+            }
+            return name;
+        }
+        string candidate = Cand(baseSafe, "_ENV");
+        int i = 2;
+        while (used.Contains(candidate))
+        {
+            candidate = Cand(baseSafe, "_ENV_" + i.ToString(CultureInfo.InvariantCulture));
+            i++;
+        }
+        return candidate;
+    }
+
     public static BuildResult BuildF2kModel(
         List<Reaction> reactions,
         Dictionary<string, (double X, double Y, double Z)> jointsXyz,
@@ -114,7 +141,10 @@ public static class Pipeline
             jointsXy[kv.Key] = (kv.Value.X, kv.Value.Y);
         }
 
-        var (frozen, warnings) = StepSelect.FreezeReactions(rows, stepMode, specific, jointsXy);
+        var freezeResult = StepSelect.FreezeReactions(rows, stepMode, specific, jointsXy);
+        var frozen = freezeResult.Frozen;
+        var warnings = freezeResult.Warnings;
+        var splits = freezeResult.Splits;
         if (frozen.Count == 0)
         {
             throw new InvalidOperationException(
@@ -186,11 +216,90 @@ public static class Pipeline
             }
         }
 
+        // -- Tách MAX/MIN mặc định: combo _ENV + viết lại combo gốc ----------
+        // Tên SAFE -> tên gốc (để tra pattern_info theo tên gốc, đúng cả khi
+        // name_map đổi tên do sanitize/trùng).
+        var safeToOrig = new Dictionary<string, string>();
+        foreach (var kv in nameMap)
+        {
+            safeToOrig[kv.Value] = kv.Key;
+        }
+
+        string OrigOfSafePattern(string pattern)
+        {
+            string bas = BaseOf(pattern);
+            return safeToOrig.TryGetValue(bas, out string? orig) ? orig : bas;
+        }
+
+        // Tên combo _ENV cho các case vừa tách (tên GỐC -> tên _ENV trong file).
+        var splitEnv = new Dictionary<string, string>();
+        var usedEnvNames = new HashSet<string>(nameMap.Values);
+        foreach (string p in patternNames)
+        {
+            usedEnvNames.Add(p);
+        }
+        foreach (var output in selOutputs)
+        {
+            if (output.Kind == "combo")
+            {
+                continue;
+            }
+            if (!splits.TryGetValue(output.Name, out var sp) || !sp.Split)
+            {
+                continue;
+            }
+            string env = MakeEnvComboName(nameMap[output.Name], usedEnvNames);
+            usedEnvNames.Add(env);
+            splitEnv[output.Name] = env;
+            sp.EnvName = env;
+        }
+
+        // Ghi chú tách MAX/MIN vào .log (qua info.Notes).
+        var notes = new List<string>();
+        foreach (var output in selOutputs)
+        {
+            if (output.Kind == "combo")
+            {
+                continue;
+            }
+            if (!splits.TryGetValue(output.Name, out var sp) || !sp.HasMaxMin)
+            {
+                continue;
+            }
+            string safeName = nameMap[output.Name];
+            if (sp.Split)
+            {
+                string maxSafe = SafePattern(output.Name + "_MAX");
+                string minSafe = SafePattern(output.Name + "_MIN");
+                notes.Add(
+                    $"Tách MAX/MIN mặc định: case {output.Name} — chênh lệch Max-Min " +
+                    $"lớn nhất {StepSelect.PythonGFormat(sp.MaxDiff)} ({sp.MaxComponent}, joint " +
+                    $"{sp.MaxJoint}) → tách thành {maxSafe} + {minSafe}, tạo " +
+                    $"combo Envelope {splitEnv[output.Name]} (Max/Min là các dòng " +
+                    "envelope do SAP báo cáo, có thể không đồng thời).");
+            }
+            else if (sp.OnlySide is not null)
+            {
+                string other = sp.OnlySide == "Max" ? "Min" : "Max";
+                notes.Add(
+                    $"Tách MAX/MIN mặc định: case {output.Name} — chỉ có dòng " +
+                    $"{sp.OnlySide} (không có dòng {other}) → giữ 1 pattern " +
+                    $"tên gốc {safeName}.");
+            }
+            else
+            {
+                notes.Add(
+                    $"Tách MAX/MIN mặc định: case {output.Name} — Max = Min (chênh " +
+                    $"lệch lớn nhất {StepSelect.PythonGFormat(sp.MaxDiff)}) → giữ 1 pattern tên gốc " +
+                    $"{safeName}.");
+            }
+        }
+
         var model = new F2kModel { SafeVersion = safeVersion };
         foreach (string p in patternNames)
         {
-            string bas = BaseOf(p);
-            if (infoMap.TryGetValue(bas, out var infoP))
+            string orig = OrigOfSafePattern(p);
+            if (infoMap.TryGetValue(orig, out var infoP))
             {
                 model.Patterns.Add(new PatternDef
                 {
@@ -215,6 +324,28 @@ public static class Pipeline
         }
 
         var sources = new List<string>();
+        // Combo _ENV tự sinh đặt TRƯỚC các combo gốc.
+        foreach (var output in selOutputs)
+        {
+            if (output.Kind == "combo")
+            {
+                continue;
+            }
+            if (!splits.TryGetValue(output.Name, out var sp) || !sp.Split)
+            {
+                continue;
+            }
+            string env = splitEnv[output.Name];
+            string maxSafe = SafePattern(output.Name + "_MAX");
+            string minSafe = SafePattern(output.Name + "_MIN");
+            var envDef = new ComboDef { Name = env, Type = "Envelope" };
+            envDef.Items.Add(new ComboItem(maxSafe, 1.0));
+            envDef.Items.Add(new ComboItem(minSafe, 1.0));
+            model.Combos.Add(envDef);
+            sources.Add($"{env} <- combo Envelope tự sinh từ case {output.Name} " +
+                $"({maxSafe} 1.0 + {minSafe} 1.0)");
+        }
+        var rewrittenCombos = new List<string>();
         foreach (var output in selOutputs)
         {
             if (output.Kind != "combo")
@@ -224,7 +355,18 @@ public static class Pipeline
                 {
                     safeName = output.Name;
                 }
-                sources.Add($"{safeName} <- case {output.Name} (frozen, {(output.IsNonlinear ? "nonlinear" : "linear")})");
+                if (splits.TryGetValue(output.Name, out var sp) && sp.Split)
+                {
+                    string maxSafe = SafePattern(output.Name + "_MAX");
+                    string minSafe = SafePattern(output.Name + "_MIN");
+                    sources.Add($"{maxSafe} + {minSafe} <- case {output.Name} (frozen, " +
+                        $"{(output.IsNonlinear ? "nonlinear" : "linear")}; tách MAX/MIN, " +
+                        $"chênh lệch lớn nhất {StepSelect.PythonGFormat(sp.MaxDiff)})");
+                }
+                else
+                {
+                    sources.Add($"{safeName} <- case {output.Name} (frozen, {(output.IsNonlinear ? "nonlinear" : "linear")})");
+                }
                 continue;
             }
             string comboSafeName;
@@ -240,14 +382,31 @@ public static class Pipeline
             };
             if (mode == "rebuild")
             {
+                var rewrites = new List<string>();
                 foreach (var item in items)
                 {
                     string mapped;
-                    if (!nameMap.TryGetValue(item.Case, out mapped))
+                    bool isSplitCase = splitEnv.TryGetValue(item.Case, out string? envName)
+                        && outputsByName.TryGetValue(item.Case, out var target)
+                        && target.Kind == "case";
+                    if (isSplitCase)
                     {
-                        mapped = item.Case;
+                        comboDef.Items.Add(new ComboItem(envName!, item.Sf));
+                        rewrites.Add($"{item.Case} -> {envName}");
                     }
-                    comboDef.Items.Add(new ComboItem(mapped, item.Sf));
+                    else
+                    {
+                        if (!nameMap.TryGetValue(item.Case, out mapped))
+                        {
+                            mapped = item.Case;
+                        }
+                        comboDef.Items.Add(new ComboItem(mapped, item.Sf));
+                    }
+                }
+                if (rewrites.Count > 0)
+                {
+                    rewrittenCombos.Add($"{comboSafeName} ({string.Join(", ", rewrites)})");
+                    note = note + "; viết lại: " + string.Join(", ", rewrites);
                 }
             }
             else
@@ -256,6 +415,11 @@ public static class Pipeline
             }
             model.Combos.Add(comboDef);
             sources.Add($"{comboSafeName} <- combo {output.Name} ({note})");
+        }
+        if (rewrittenCombos.Count > 0)
+        {
+            notes.Add("Combo gốc viết lại sang combo _ENV: " +
+                string.Join("; ", rewrittenCombos) + ".");
         }
 
         var sortedJointNames = jointsXyz.Keys.OrderBy(n => n, JointNameComparer.Instance).ToList();
@@ -305,6 +469,11 @@ public static class Pipeline
             info.SapSums[kv.Key] = kv.Value;
         }
         info.Warnings.AddRange(warnings);
+        info.Notes.AddRange(notes);
+        foreach (var kv in splits)
+        {
+            info.Splits[kv.Key] = kv.Value;
+        }
 
         return new BuildResult { Model = model, Info = info };
     }

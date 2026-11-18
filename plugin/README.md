@@ -27,8 +27,9 @@ plugin/
 │   ├── MainForm.cs               # form 5 bước như app Python
 │   └── API_DUMP.md               # chữ ký thật dump từ CSiAPIv1.dll v2.7.0.0
 └── Sap2Safe.ParityTest/          # console net8.0, kiểm chứng C# vs Python
-    ├── Program.cs                # 4 check, exit 0 khi tất cả pass
-    ├── python_reference.py       # phía tham chiếu Python (dev tool)
+    ├── Program.cs                # 5 check, exit 0 khi tất cả pass
+    ├── python_reference.py       # phía tham chiếu Python, Check 2 (dev tool)
+    ├── split_reference.py        # phía tham chiếu Python, Check 5 tách MAX/MIN
     └── README.md
 ```
 
@@ -60,18 +61,48 @@ dưới đây.
 
 ```bash
 ~/.dotnet/dotnet run -c Release --project Sap2Safe.ParityTest/
-python3 -m pytest ~/workspace/sap2safe/tests/ -q   # 39/39 pass
+python3 -m pytest ~/workspace/sap2safe/tests/ -q   # 49/49 pass
 ```
 
 Kết quả: **TẤT CẢ PASS** — FormatNumber 18/18 giá trị khớp Python từng chữ
 số; round-trip MONG.sf end-to-end khớp **100%** (2035/2035 dòng sau chuẩn hoá
 GUID + dòng header ngày giờ; 1380 dòng JOINT LOADS; 92 point, 15 pattern,
 72 combo); ΣFZ khớp 15/15 pattern, chênh lệch lớn nhất 0.000000.
+Check 5 (tách MAX/MIN mặc định): trên cùng đầu vào MONG.sf với dòng Min của
+WX1+ tại joint 1 giảm 10% F3, C# và Python cùng tách đúng 1 pattern WX1+
+(max_diff 29.63, F3, joint 1), tạo combo Envelope `WX1+_ENV` đặt trước các
+combo gốc, viết lại 8 combo gốc dùng WX1+ (SLS_3, SLS_11, SLS_19, ULS_3,
+ULS_11, ULS_19, ULS_27, Wind_WX1+) sang `WX1+_ENV` (giữ nguyên SF);
+16 pattern, 16 case, 73 combo, 1472 point load; 2 file xuất khớp byte 100%
+(2133 dòng).
 Parity mới chỉ kiểm trên một fixture MONG.sf, một pipeline duy nhất
 (`step_mode="last"`, `flip_sign=true`, SAFE 22.5.1) — đúng pipeline mà UI
 plugin dùng (từ bản 20261118-110700 form chỉ còn Last step, đổi dấu luôn bật).
-Các mode `specific`/`governing`/`maxmin` vẫn còn trong Core nhưng không còn
-trên UI và chưa kiểm parity.
+Mode `maxmin` trong Core nay là alias của logic tách mặc định (như `last`),
+đã kiểm parity qua Check 5; các mode `specific`/`governing` vẫn còn trong
+Core nhưng không còn trên UI và chưa kiểm parity.
+
+## Tách MAX/MIN mặc định (không có control UI)
+
+Quy tắc user chốt 18/11, áp dụng cho mọi case khi đóng băng ở Last step
+(cả app Python và plugin C#, cùng một logic):
+
+- Case có dòng Max/Min do SAP báo cáo: so sánh 2 vector từng joint, đủ 6
+  thành phần, dung sai |Max−Min| > 1e-6 × max(1, |Max|, |Min|). Khác nhau ở
+  bất kỳ joint/thành phần nào → tách thành `<tên>_MAX` + `<tên>_MIN`
+  (Max trước Min sau), tạo thêm combo Envelope `<tên>_ENV`
+  (MAX 1.0 + MIN 1.0) đặt TRƯỚC các combo gốc; các combo gốc dùng case đó
+  được viết lại sang `_ENV` (giữ nguyên SF). `_ENV` được tạo ngay cả khi
+  không combo gốc nào dùng tới case đó; tên `_ENV` trùng thì thêm
+  `_2`, `_3`... Max = Min thì giữ 1 pattern tên gốc (lấy dòng Max).
+  Case chỉ có dòng Step thì lấy step cuối, không tách. Joint thiếu 1 phía
+  khi tách thì lấy phía còn lại bù vào + ghi warning.
+- Mỗi case tách/giữ đều ghi 1 dòng vào file `.log` (chênh lệch Max-Min lớn
+  nhất + kết luận + danh sách combo gốc đã viết lại). Vector `_MAX`/`_MIN`
+  là các dòng envelope do SAP báo cáo, có thể không đồng thời.
+- Logic nằm ở `StepSelect.cs` (phân tích tách) + `Pipeline.cs` (combo
+  `_ENV` + viết lại combo gốc); phía Python tương ứng là
+  `step_select.py` + `app.py:build_f2k_model`.
 
 ## Nạp plugin trong SAP2000 v26
 

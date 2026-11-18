@@ -66,8 +66,13 @@ rem -> dist\SAP2SAFE.exe
 3. **Chọn output + step** — tick case/combo (combo được chọn sẽ tự động
    gồm cả các case thành phần để đóng băng); step mode: Last step (mặc
    định cho Nonlinear Static/Staged), Step cụ thể, Governing step
-   (max |F3|), hoặc tách MAX-MIN (chỉ Envelope/RS). Checkbox đổi dấu
-   mặc định BẬT.
+   (max |F3|), hoặc tách MAX-MIN. **Tách MAX/MIN MẶC ĐỊNH (từ 18/11,
+   không có control UI):** case có dòng Max/Min khác nhau (dung sai
+   1e-6 tương đối) thì tự tách thành `<tên>_MAX` + `<tên>_MIN`, tạo thêm
+   combo Envelope `<tên>_ENV` (MAX 1.0 + MIN 1.0) đặt trước các combo gốc,
+   và các combo gốc dùng case đó được viết lại sang `_ENV` (giữ nguyên
+   SF); Max = Min thì giữ 1 pattern tên gốc. Chi tiết + dòng log xem
+   `HUONG_DAN_TEST.md` mục 6. Checkbox đổi dấu mặc định BẬT.
 4. **Tham số xuất** — version SAFE (mặc định 22.5.1, theo MONG.sf),
    thư mục xuất.
 5. **Preview + xuất** — bảng preview + ΣFZ từng pattern; nút xuất sinh 4 file:

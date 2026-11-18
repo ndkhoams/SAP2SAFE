@@ -45,16 +45,40 @@ chỉ làm được trên máy Windows có SAP2000 v26.
    (ΣFZ SAFE = -ΣF3 SAP); có LECH thì không import.
 5. Import file `.f2k` (hoặc `.sf`) vào model SAFE đã có sẵn → so số point/pattern/
    load với file `.log` (counts).
-6. So sánh 1 case với app Python: cùng model, cùng Z, cùng case, step `last` —
+6. Nếu có case tách MAX/MIN (xem `.log` mục 4): sau khi import, mở trong SAFE
+   Define > Load Combinations kiểm tra combo `<tên>_ENV` loại Envelope
+   (2 thành phần `<tên>_MAX` 1.0 + `<tên>_MIN` 1.0) và các combo gốc đã trỏ
+   sang `_ENV` thay cho tên case gốc.
+7. So sánh 1 case với app Python: cùng model, cùng Z, cùng case, step `last` —
    số trong grid preview phải khớp file Excel/Python đã xuất trước đó.
 
-## 4. Step mode — chỉ còn Last step (từ bản build 20261118-110700)
+## 4. Step mode — chỉ còn Last step + tách MAX/MIN mặc định (từ bản build mới nhất)
 
 - Form chỉ còn Last step (label xám "Đóng băng ở Last step" dưới 2 listbox);
   các lựa chọn Step cụ thể / Governing / Tách MAX-MIN đã bỏ khỏi UI theo yêu
-  cầu 18/11. Logic các mode đó vẫn còn trong Core (`StepSelect.cs`) để parity
-  test, không gọi từ form nữa.
-- Đổi dấu phản lực -> tải SAFE luôn BẬT (không còn checkbox trên form).
+  cầu 18/11. Đổi dấu phản lực -> tải SAFE luôn BẬT (không còn checkbox).
+- **Tách MAX/MIN là hành vi MẶC ĐỊNH, không có control UI:** với mỗi case,
+  plugin so sánh vector Max và Min do SAP báo cáo (từng joint, đủ 6 thành
+  phần, dung sai |Max−Min| > 1e-6 × max(1, |Max|, |Min|)):
+  - Max = Min ở mọi joint → chỉ xuất 1 pattern, giữ nguyên tên gốc (vd SW).
+  - Max ≠ Min ở bất kỳ joint/thành phần nào → case tách thành 2 pattern
+    `<tên>_MAX` + `<tên>_MIN` (Max trước Min sau), tạo thêm combo Envelope
+    `<tên>_ENV` (MAX 1.0 + MIN 1.0) đặt TRƯỚC các combo gốc; các combo gốc
+    dùng case đó được viết lại sang `_ENV` (giữ nguyên SF, vd 1.1·SW →
+    1.1·SW_ENV). `_ENV` được tạo ngay cả khi không combo gốc nào dùng tới
+    case đó. Tên `_ENV` trùng tên đã có thì thêm `_2`, `_3`...
+  - Case chỉ có dòng Step (Linear Static) thì lấy step cuối, không tách.
+- Kiểm tra trong file `.log` sau khi xuất: mỗi case có dòng "Tách MAX/MIN
+  mặc định: case ..." ghi chênh lệch lớn nhất tìm được + kết luận tách hay
+  giữ 1 pattern, và dòng "Combo gốc viết lại sang combo _ENV: ..." liệt kê
+  các combo đã viết lại. Trong file `.f2k`/`.sf`: bảng LOAD COMBINATION
+  DEFINITIONS phải có combo `<tên>_ENV` loại Envelope đứng trước các combo
+  gốc; sau khi import vào SAFE, mở Define > Load Combinations kiểm tra combo
+  `<tên>_ENV` (SW_MAX 1.0 + SW_MIN 1.0) có đủ và các combo gốc đã trỏ sang
+  `_ENV` thay cho tên case gốc.
+- Vector `_MAX`/`_MIN` là các dòng envelope do SAP báo cáo, có thể không
+  đồng thời — xem cảnh báo trong form (popup Cảnh báo sau khi Xem preview)
+  và file `.log`.
 
 ## 5. Test lỗi (không được crash SAP)
 
@@ -78,3 +102,5 @@ chỉ làm được trên máy Windows có SAP2000 v26.
 - `GetCoordCartesian(..., "Global")` có nhận chuỗi `"Global"` làm hệ tọa độ không.
 - Form WinForms hiển thị đúng trên màn hình thật (layout 5 groupbox, không tràn/cắt).
 - File `.f2k` import vào SAFE 22.5.1 không lỗi, đủ 7 bảng.
+- Tách MAX/MIN mặc định (mục 4): import file có case tách vào SAFE, kiểm tra
+  combo `<tên>_ENV` loại Envelope và các combo gốc đã viết lại sang `_ENV`.

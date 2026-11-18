@@ -66,7 +66,7 @@ internal static class Program
         Console.WriteLine($"SAP root: {sapRoot}");
         Console.WriteLine();
 
-        bool c1 = false, c2 = false, c3 = false, c4 = false;
+        bool c1 = false, c2 = false, c3 = false, c4 = false, c5 = false;
         try { c1 = Check1FormatNumber(sapRoot); }
         catch (Exception ex) { Console.WriteLine($"[Check 1] EXCEPTION: {ex.Message}"); }
         Console.WriteLine();
@@ -88,6 +88,14 @@ internal static class Program
         catch (Exception ex) { Console.WriteLine($"[Check 2] EXCEPTION: {ex.Message}"); }
         Console.WriteLine();
 
+        try
+        {
+            if (tables is null) throw new InvalidOperationException("Khong parse duoc MONG.sf.");
+            c5 = Check5SplitParity(mong, tables, outDir, sapRoot, pythonRef);
+        }
+        catch (Exception ex) { Console.WriteLine($"[Check 5] EXCEPTION: {ex.Message}"); }
+        Console.WriteLine();
+
         try { c3 = Check3Pytest(sapRoot); }
         catch (Exception ex) { Console.WriteLine($"[Check 3] EXCEPTION: {ex.Message}"); }
         Console.WriteLine();
@@ -97,7 +105,8 @@ internal static class Program
         Console.WriteLine($"Check 2 (end-to-end)    : {(c2 ? "PASS" : "FAIL")}");
         Console.WriteLine($"Check 3 (pytest Python) : {(c3 ? "PASS" : "FAIL")}");
         Console.WriteLine($"Check 4 (parse MONG.sf) : {(c4 ? "PASS" : "FAIL")}");
-        bool all = c1 && c2 && c3 && c4;
+        Console.WriteLine($"Check 5 (tach MAX/MIN)  : {(c5 ? "PASS" : "FAIL")}");
+        bool all = c1 && c2 && c3 && c4 && c5;
         Console.WriteLine(all ? "KET LUAN: TAT CA PASS" : "KET LUAN: CO MUC FAIL");
         return all ? 0 : 1;
     }
@@ -456,6 +465,227 @@ internal static class Program
         return null;
     }
 
+    // ---------------------------------------------------------------- Check 5
+    private static bool Check5SplitParity(
+        string mong,
+        Dictionary<string, List<Dictionary<string, string>>> tables,
+        string outDir,
+        string sapRoot,
+        string? pythonRefArg)
+    {
+        Console.WriteLine("--- Check 5: Parity tach MAX/MIN mac dinh (C# vs Python) ---");
+        Console.WriteLine("  Dau vao: MONG.sf, moi dong JOINT LOADS -> 2 dong Max/Min; " +
+            "rieng WX1+ joint 1: F3 Min = 0.9 * F3 Max (tao truong hop tach).");
+        Directory.CreateDirectory(outDir);
+        string csPath = Path.Combine(outDir, "cs_split.f2k");
+        string pyPath = Path.Combine(outDir, "py_split.f2k");
+
+        // ---- Xay dung dau vao C# (giong het split_reference.py) ----
+        var jointsXyz = new Dictionary<string, (double X, double Y, double Z)>();
+        foreach (var r in tables["POINT OBJECT CONNECTIVITY"])
+        {
+            jointsXyz[r["UniqueName"]] = (
+                double.Parse(r["X"], CultureInfo.InvariantCulture),
+                double.Parse(r["Y"], CultureInfo.InvariantCulture),
+                0.0);
+        }
+        var restraints = new Dictionary<string, bool[]>();
+        foreach (var r in tables["JOINT ASSIGNMENTS - RESTRAINTS"])
+        {
+            restraints[r["UniqueName"]] = new[]
+            {
+                r["UX"] == "Yes", r["UY"] == "Yes", r["UZ"] == "Yes",
+                r["RX"] == "Yes", r["RY"] == "Yes", r["RZ"] == "Yes",
+            };
+        }
+        var patternInfo = new Dictionary<string, PatternInfo>();
+        foreach (var r in tables["LOAD PATTERN DEFINITIONS"])
+        {
+            if (r["Name"].EndsWith("_ABOVE", StringComparison.Ordinal)) continue;
+            patternInfo[r["Name"]] = new PatternInfo
+            {
+                DesignType = r["Type"],
+                SelfWtMult = double.Parse(r["Self Weight Multiplier"], CultureInfo.InvariantCulture),
+            };
+        }
+        var caseNames = new List<string>();
+        foreach (var r in tables["LOAD CASE DEFINITIONS - LINEAR STATIC"])
+        {
+            if (!caseNames.Contains(r["Name"])) caseNames.Add(r["Name"]);
+        }
+        var outputs = new List<SapOutput>();
+        foreach (string n in caseNames)
+        {
+            outputs.Add(new SapOutput { Name = n, Kind = "case", CaseType = null, IsNonlinear = false });
+        }
+        var comboNames = new List<string>();
+        var comboItems = new Dictionary<string, List<ComboItem>>();
+        var comboTypes = new Dictionary<string, string>();
+        foreach (var r in tables["LOAD COMBINATION DEFINITIONS"])
+        {
+            string name = r["Name"];
+            if (!comboItems.ContainsKey(name))
+            {
+                comboNames.Add(name);
+                comboItems[name] = new List<ComboItem>();
+                comboTypes[name] = r.TryGetValue("Type", out string? t) ? t : "Linear Add";
+            }
+            comboItems[name].Add(new ComboItem(
+                r["Load Name"],
+                double.Parse(r["SF"], CultureInfo.InvariantCulture)));
+        }
+        foreach (string n in comboNames)
+        {
+            var o = new SapOutput { Name = n, Kind = "combo", ComboType = comboTypes[n] };
+            o.Components.AddRange(comboItems[n]);
+            outputs.Add(o);
+        }
+        var reactions = new List<Reaction>();
+        foreach (var r in tables["JOINT LOADS ASSIGNMENTS - FORCE"])
+        {
+            double f1 = -double.Parse(r["FX"], CultureInfo.InvariantCulture);
+            double f2 = -double.Parse(r["FY"], CultureInfo.InvariantCulture);
+            double f3 = -double.Parse(r["FZ"], CultureInfo.InvariantCulture);
+            double m1 = -double.Parse(r["MX"], CultureInfo.InvariantCulture);
+            double m2 = -double.Parse(r["MY"], CultureInfo.InvariantCulture);
+            double m3 = -double.Parse(r["MZ"], CultureInfo.InvariantCulture);
+            reactions.Add(new Reaction
+            {
+                Joint = r["UniqueName"], OutputName = r["Load Pattern"], OutputKind = "case",
+                StepType = "Max", StepNum = 0,
+                F1 = f1, F2 = f2, F3 = f3, M1 = m1, M2 = m2, M3 = m3,
+            });
+            double f3Min = (r["Load Pattern"] == "WX1+" && r["UniqueName"] == "1")
+                ? f3 * 0.9 : f3;
+            reactions.Add(new Reaction
+            {
+                Joint = r["UniqueName"], OutputName = r["Load Pattern"], OutputKind = "case",
+                StepType = "Min", StepNum = 0,
+                F1 = f1, F2 = f2, F3 = f3Min, M1 = m1, M2 = m2, M3 = m3,
+            });
+        }
+        var selected = new List<string>(caseNames);
+        selected.AddRange(comboNames);
+
+        BuildResult result = Pipeline.BuildF2kModel(
+            reactions, jointsXyz, outputs, selected,
+            jointsRestraint: restraints, patternInfo: patternInfo,
+            stepMode: "last", specific: null, flipSign: true, safeVersion: "22.5.1");
+        WriteCounts counts = SfWriter.WriteF2k(csPath, result.Model);
+        Console.WriteLine($"  C#: points={counts.Points} patterns={counts.Patterns} cases={counts.Cases} " +
+            $"combos={counts.Combos} point_loads={counts.PointLoads} path={csPath}");
+        Console.WriteLine("  C# tach:");
+        foreach (var kv in result.Info.Splits)
+        {
+            if (!kv.Value.HasMaxMin) continue;
+            Console.WriteLine($"    case {kv.Key}: split={kv.Value.Split} env={kv.Value.EnvName} " +
+                $"max_diff={StepSelect.PythonGFormat(kv.Value.MaxDiff)} joint={kv.Value.MaxJoint} comp={kv.Value.MaxComponent}");
+        }
+        foreach (string note in result.Info.Notes)
+        {
+            Console.WriteLine($"  C# note: {note}");
+        }
+        if (result.Warnings.Count > 0)
+        {
+            Console.WriteLine("  C# warnings: " + string.Join("; ", result.Warnings));
+        }
+
+        // ---- Kiem tra ky vong (truoc khi so voi Python) ----
+        bool wxSplit = result.Info.Splits.TryGetValue("WX1+", out var wx) && wx.Split
+            && wx.EnvName == "WX1+_ENV";
+        bool othersKept = result.Info.Splits
+            .Where(kv => kv.Key != "WX1+")
+            .All(kv => !kv.Value.Split);
+        bool firstComboEnv = result.Model.Combos.Count > 0
+            && result.Model.Combos[0].Name == "WX1+_ENV"
+            && result.Model.Combos[0].Type == "Envelope"
+            && result.Model.Combos[0].Items.Count == 2
+            && result.Model.Combos[0].Items[0].Case == "WX1+_MAX"
+            && result.Model.Combos[0].Items[0].Sf == 1.0
+            && result.Model.Combos[0].Items[1].Case == "WX1+_MIN"
+            && result.Model.Combos[0].Items[1].Sf == 1.0;
+        bool countsOk = counts.Patterns == 16 && counts.Cases == 16
+            && counts.Combos == 73 && counts.PointLoads == 1472;
+        Console.WriteLine($"  Ky vong: WX1+ tach={wxSplit} | cac case khac giu 1 pattern={othersKept} | " +
+            $"combo dau la WX1+_ENV={firstComboEnv} | dem 16/16/73/1472={countsOk}");
+        if (!wxSplit || !othersKept || !firstComboEnv || !countsOk)
+        {
+            Console.WriteLine("Check 5: FAIL (khong dat ky vong phia C#)");
+            return false;
+        }
+
+        // ---- Chay phia Python tham chieu ----
+        string? splitRef = FindSplitReference(pythonRefArg);
+        if (splitRef is null)
+        {
+            Console.WriteLine("  [FAIL] Khong tim thay split_reference.py.");
+            return false;
+        }
+        Console.WriteLine($"  Chay Python: python3 {splitRef} --mong {mong} --out {pyPath} --sap-root {sapRoot}");
+        var (pyExit, pyOut, pyErr) = RunProcess("python3",
+            new[] { splitRef, "--mong", mong, "--out", pyPath, "--sap-root", sapRoot }, null);
+        Console.WriteLine("  " + pyOut.Trim().Replace("\n", "\n  "));
+        if (pyExit != 0)
+        {
+            Console.WriteLine($"  [FAIL] split_reference.py exit={pyExit}: {pyErr.Trim()}");
+            return false;
+        }
+        if (!File.Exists(pyPath))
+        {
+            Console.WriteLine("  [FAIL] Python khong sinh ra py_split.f2k.");
+            return false;
+        }
+
+        string[] csLines = Normalize(File.ReadAllLines(csPath));
+        string[] pyLines = Normalize(File.ReadAllLines(pyPath));
+        Console.WriteLine($"  So dong: C#={csLines.Length}  Python={pyLines.Length}");
+        int diffs = 0;
+        int maxShow = 20;
+        int nLines = Math.Min(csLines.Length, pyLines.Length);
+        for (int i = 0; i < nLines; i++)
+        {
+            if (csLines[i] != pyLines[i])
+            {
+                diffs++;
+                if (diffs <= maxShow)
+                {
+                    Console.WriteLine($"  [LECH dong {i + 1}]");
+                    Console.WriteLine($"    C# : {csLines[i]}");
+                    Console.WriteLine($"    Py : {pyLines[i]}");
+                }
+            }
+        }
+        if (csLines.Length != pyLines.Length)
+        {
+            diffs += Math.Abs(csLines.Length - pyLines.Length);
+        }
+        bool bytesEqual = csLines.Length == pyLines.Length && diffs == 0;
+        Console.WriteLine(bytesEqual
+            ? "  So byte sau chuan hoa: KHOP 100%"
+            : $"  So byte sau chuan hoa: LECH ({diffs} dong)");
+        bool ok = bytesEqual;
+        Console.WriteLine(ok ? "Check 5: PASS" : "Check 5: FAIL");
+        return ok;
+    }
+
+    private static string? FindSplitReference(string? pythonRefArg)
+    {
+        string? dir = null;
+        if (pythonRefArg is not null)
+        {
+            dir = Path.GetDirectoryName(Path.GetFullPath(pythonRefArg));
+        }
+        else
+        {
+            string? found = FindPythonReference();
+            if (found is not null) dir = Path.GetDirectoryName(found);
+        }
+        if (dir is null) return null;
+        string cand = Path.Combine(dir, "split_reference.py");
+        if (File.Exists(cand)) return cand;
+        return null;
+    }
+
     // ---------------------------------------------------------------- Check 3
     private static bool Check3Pytest(string sapRoot)
     {
@@ -473,8 +703,8 @@ internal static class Program
         var mFail = Regex.Match(combined, @"(\d+) failed");
         int passed = mPass.Success ? int.Parse(mPass.Groups[1].Value) : -1;
         int failed = mFail.Success ? int.Parse(mFail.Groups[1].Value) : 0;
-        Console.WriteLine($"  Ket qua parse duoc: {passed} passed, {failed} failed (ky vong 39/39 pass), exit={exit}");
-        bool ok = exit == 0 && passed == 39 && failed == 0;
+        Console.WriteLine($"  Ket qua parse duoc: {passed} passed, {failed} failed (ky vong >=39 pass, 0 fail), exit={exit}");
+        bool ok = exit == 0 && passed >= 39 && failed == 0;
         Console.WriteLine(ok ? "Check 3: PASS" : "Check 3: FAIL");
         return ok;
     }
