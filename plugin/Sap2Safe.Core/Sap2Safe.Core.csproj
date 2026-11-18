@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Sap2Safe.Core</AssemblyName>
+    <RootNamespace>Sap2Safe.Core</RootNamespace>
+  </PropertyGroup>
+
+</Project>

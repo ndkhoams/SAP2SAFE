@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Sap2Safe.Plugin</AssemblyName>
+    <RootNamespace>Sap2Safe.Plugin</RootNamespace>
+    <!-- Dấu build chống stale-build (giờ UTC+7, dạng yyyyMMdd-HHmmss).
+         Chỉ sống trong assembly metadata + version.txt, KHÔNG ghi vào file .cs nguồn. -->
+    <PluginBuildTimestamp>$([System.DateTime]::UtcNow.AddHours(7).ToString("yyyyMMdd-HHmmss"))</PluginBuildTimestamp>
+  </PropertyGroup>
+
+  <!-- CSiAPIv1.dll: ưu tiên đường dẫn cài SAP mặc định trên Windows;
+       nếu không có thì dùng bản local trên Linux để build kiểm chứng;
+       cho phép override bằng -p:CSiApiDll=... -->
+  <PropertyGroup>
+    <CSiApiDll Condition="'$(CSiApiDll)' == '' and Exists('C:\Program Files\Computers and Structures\SAP2000 26\CSiAPIv1.dll')">C:\Program Files\Computers and Structures\SAP2000 26\CSiAPIv1.dll</CSiApiDll>
+    <CSiApiDll Condition="'$(CSiApiDll)' == ''">$(HOME)/workspace/user/files/CSiAPIv1.dll</CSiApiDll>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="PluginBuildTimestamp" Value="$(PluginBuildTimestamp)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sap2Safe.Core\Sap2Safe.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="CSiAPIv1">
+      <HintPath>$(CSiApiDll)</HintPath>
+      <!-- KHÔNG copy CSiAPIv1.dll vào thư mục output: SAP đã có DLL của nó. -->
+      <Private>false</Private>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="WritePluginVersionFile" AfterTargets="Build">
+    <WriteLinesToFile File="$(TargetDir)version.txt" Lines="$(PluginBuildTimestamp)" Overwrite="true" Encoding="utf-8" />
+  </Target>
+
+</Project>

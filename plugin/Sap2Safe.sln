@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sap2Safe.Core", "Sap2Safe.Core\Sap2Safe.Core.csproj", "{F5FCCF3F-1817-4892-8B43-6AAC134AEEF8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sap2Safe.Plugin", "Sap2Safe.Plugin\Sap2Safe.Plugin.csproj", "{20CAD31F-48E6-48EA-9A9A-F5C6AF3BDBAF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sap2Safe.ParityTest", "Sap2Safe.ParityTest\Sap2Safe.ParityTest.csproj", "{1A411BF5-F26A-421B-96DA-48172E2E730F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F5FCCF3F-1817-4892-8B43-6AAC134AEEF8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F5FCCF3F-1817-4892-8B43-6AAC134AEEF8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F5FCCF3F-1817-4892-8B43-6AAC134AEEF8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F5FCCF3F-1817-4892-8B43-6AAC134AEEF8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{20CAD31F-48E6-48EA-9A9A-F5C6AF3BDBAF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{20CAD31F-48E6-48EA-9A9A-F5C6AF3BDBAF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{20CAD31F-48E6-48EA-9A9A-F5C6AF3BDBAF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{20CAD31F-48E6-48EA-9A9A-F5C6AF3BDBAF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1A411BF5-F26A-421B-96DA-48172E2E730F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1A411BF5-F26A-421B-96DA-48172E2E730F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1A411BF5-F26A-421B-96DA-48172E2E730F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1A411BF5-F26A-421B-96DA-48172E2E730F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

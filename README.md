@@ -102,3 +102,22 @@ Test COM trên Windows được skip với lý do rõ ràng (COM chỉ có trên
 Test fixture thật nằm ở `~/workspace/sap2safe_work/fixtures/` (không copy
 vào repo): 15 pattern, 15 case, **72 combo** (36 ULS + 26 SLS + 8 Wind +
 2 ENV), 92 joint có gối ở Z=-1.5, ΣFZ tham chiếu trong `sf_reader.py`.
+
+## Plugin chạy trong SAP2000 v26 (C#, `plugin/`)
+
+Bản plugin C# chạy in-process trong SAP2000 v26 (Tools > Add/Show Plugins),
+đọc trực tiếp model đang mở qua CSiAPIv1 — không qua COM ngoài, không cần
+file trung gian. Logic tính toán port 1-1 từ app Python sang thư viện
+`Sap2Safe.Core` (netstandard2.0); parity với Python đã kiểm chứng 100%
+trên fixture MONG.sf (2035/2035 dòng sau chuẩn hoá GUID + header, 1380 dòng
+JOINT LOADS, ΣFZ khớp 15/15 pattern).
+
+```bash
+~/.dotnet/dotnet build -c Release plugin/Sap2Safe.sln   # 0 lỗi / 0 cảnh báo (Linux, chỉ biên dịch)
+~/.dotnet/dotnet run -c Release --project plugin/Sap2Safe.ParityTest/   # parity C# vs Python
+```
+
+Chi tiết: `plugin/README.md`; checklist test trên Windows + SAP thật:
+`plugin/HUONG_DAN_TEST_PLUGIN.md`. **Chưa kiểm chứng:** chạy thật trong
+SAP2000 v26, import `.F2K` vào SAFE, ánh xạ int loại combo (DLL không có
+enum loại combo — xem `plugin/Sap2Safe.Plugin/API_DUMP.md`).
